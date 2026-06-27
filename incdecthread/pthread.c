@@ -8,7 +8,7 @@
 // If you test at more than 1 billion and/or with a larger INCDEC_AMOUNT, you
 // risk an overflow.
 //
-#define COUNT  (1000000)
+#define COUNT  (1000001)
 //#define COUNT  (1000000000)
 
 #define INCDEC_AMOUNT (1)
