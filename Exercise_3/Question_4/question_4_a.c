@@ -1,19 +1,16 @@
-                                                                    
-//#include "msgQLib.h"
-//#include "mqueue.h"
-//#include "errnoLib.h" 
-//#include "ioLib.h" 
 
-#include <stdlib.h>
-#include <string.h>
+//I pulled most of the modifications from the posix_mq.c example in "POSIX_MQ_LOOP" and added pthread scheduling
+
 #include <stdio.h>
-
+#include <stdlib.h>
+#include <errno.h>
 #include <pthread.h>
+#include <string.h>
 #include <mqueue.h>
-#include <unistd.h>
+#include <sys/types.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 
-// On Linux the file systems slash is needed
 #define SNDRCV_MQ "/send_receive_mq"
 
 #define MAX_MSG_SIZE 128
@@ -21,80 +18,76 @@
 
 struct mq_attr mq_attr;
 
-
 pthread_t th_receive, th_send; // create threads
 pthread_attr_t attr_receive, attr_send;
 struct sched_param param_receive, param_send;
-
-static char canned_msg[] = "This is a test, and only a test, in the event of real emergency, you would be instructed...."; // Message to be sent
-
-/* receives pointer to heap, reads it, and deallocate heap memory */
 
 void *receiver(void *arg)
 {
   mqd_t mymq;
   char buffer[MAX_MSG_SIZE];
-  int prio;
-  int rc;
- 
-   printf("receiver - thread entry\n");
-
-  mymq = mq_open(SNDRCV_MQ, O_CREAT|O_RDWR, S_IRWXU, &mq_attr);  
+  unsigned int prio;
+  int nbytes;
   
+  puts("receiver thread entry\n");
 
-    /* read oldest, highest priority msg from the message queue until empty */
-    do
-    {
-        printf("receiver - awaiting message\n");
-#if 1
-        if((rc = mq_receive(mymq, buffer, MAX_MSG_SIZE, &prio)) == ERROR)
-        {
-          perror("mq_receive");
-        }
-        else
-        {
-          buffer[rc] = '\0';
-          printf("receive: msg %s received with priority = %d, rc = %d\n", buffer, prio, rc);
-        }
-#endif
+  mymq = mq_open(SNDRCV_MQ, O_CREAT|O_RDWR, S_IRWXU, &mq_attr);
 
-    } while(rc != ERROR);
+  if(mymq == (mqd_t)ERROR)
+  {
+    perror("receiver mq_open");
+    exit(-1);
+  }
+
+  /* read oldest, highest priority msg from the message queue */
+  if((nbytes = mq_receive(mymq, buffer, MAX_MSG_SIZE, &prio)) == ERROR)
+  {
+    perror("mq_receive");
+  }
+  else
+  {
+    buffer[nbytes] = '\0';
+    printf("receive: msg %s received with priority = %d, length = %d\n",
+           buffer, prio, nbytes);
+  }
     
 }
 
+//create message text
+static char canned_msg[] = "this is just a tribute to the actual message";
 
 void *sender(void *arg)
 {
+  mqd_t mymq;
+  
+  int nbytes;
 
-   mqd_t mymq;
-   int prio;
-   int rc;
+  mymq = mq_open(SNDRCV_MQ, O_CREAT|O_RDWR, S_IRWXU, &mq_attr);
 
-   printf("sender - thread entry\n");
+  if(mymq < 0)
+  {
+    perror("sender mq_open");
+    exit(-1);
+  }
+  else
+  {
+    printf("sender opened mq\n");
+  }
 
-   mymq = mq_open(SNDRCV_MQ, O_CREAT|O_RDWR, S_IRWXU, &mq_attr); //  ***
-
-    /* send messages with priority=30 */
-    do
-    {
-        printf("sender - sending message of size=%d\n", sizeof(canned_msg));
-#if 1
-        if((rc = mq_send(mymq, canned_msg, sizeof(canned_msg), 30)) == ERROR)
-        {
-            perror("mq_send");
-        }
-        else
-        {
-            printf("send: message successfully sent, rc=%d\n", rc);
-        }
-#endif
-
-    } while(rc != ERROR);
+  /* send message with priority=30 */
+  if((nbytes = mq_send(mymq, canned_msg, sizeof(canned_msg), 30)) == ERROR)
+  {
+    perror("mq_send");
+  }
+  else
+  {
+    printf("send: message successfully sent\n");
+  }
   
 }
 
 
-void main(void)
+int main(void)
 {
   int i=0, rc=0;
   /* setup common message q attributes */
@@ -102,21 +95,13 @@ void main(void)
   mq_attr.mq_msgsize = MAX_MSG_SIZE;
 
   mq_attr.mq_flags = 0;
-
+  
+  //priority management with SCHED_FIFO
   int rt_max_prio, rt_min_prio;
 
   rt_max_prio = sched_get_priority_max(SCHED_FIFO);
   rt_min_prio = sched_get_priority_min(SCHED_FIFO);
 
-
-  // Create two communicating processes right here
-  //receiver((void *)0);
-  //sender((void *)0);
-  
-  //exit(0); 
-  
-  //creating prioritized thread
-  
   //initialize  with default atrribute
   rc = pthread_attr_init(&attr_receive);
   //specific scheduling for Receiving
@@ -124,7 +109,7 @@ void main(void)
   rc = pthread_attr_setschedpolicy(&attr_receive, SCHED_FIFO); 
   param_receive.sched_priority = rt_min_prio;
   pthread_attr_setschedparam(&attr_receive, &param_receive);
-  
+
   //initialize  with default atrribute
   rc = pthread_attr_init(&attr_send);
   //specific scheduling for Receiving
@@ -133,6 +118,7 @@ void main(void)
   param_send.sched_priority = rt_max_prio; //the receiver has a higher priority than the sender
   pthread_attr_setschedparam(&attr_send, &param_send);
   
+  //logic for thread creation, send message finishes first
   if((rc=pthread_create(&th_send, &attr_send, sender, NULL)) == 0)
   {
     printf("\n\rSender Thread Created with rc=%d\n\r", rc);
@@ -158,4 +144,7 @@ void main(void)
 
   printf("pthread join receive\n");  
   pthread_join(th_receive, NULL);
+
+  
+   
 }

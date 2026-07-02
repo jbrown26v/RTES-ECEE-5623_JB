@@ -14,6 +14,7 @@
 #include <pthread.h>
 #include <mqueue.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 // On Linux the file systems slash is needed
 #define SNDRCV_MQ "/send_receive_mq"
